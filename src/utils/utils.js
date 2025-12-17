@@ -1,10 +1,27 @@
 import config from '../config/config.js';
 import tokenManager from '../auth/token_manager.js';
 import { generateRequestId } from './idGenerator.js';
-import os from 'os';
+import { saveBase64Image } from './imageStorage.js';
+import { getReasoningSignature, getToolSignature } from './thoughtSignatureCache.js';
+import { setToolNameMapping } from './toolNameCache.js';
 
-// 思维链签名占位（用于启用思考模型但没有真实签名时）
-const DEFAULT_THOUGHT_SIGNATURE = 'RXFRRENrZ0lDaEFDR0FJcVFKV1Bvcy9GV20wSmtMV2FmWkFEbGF1ZTZzQTdRcFlTc1NvbklmemtSNFo4c1dqeitIRHBOYW9hS2NYTE1TeTF3bjh2T1RHdE1KVjVuYUNQclZ5cm9DMFNETHk4M0hOSWsrTG1aRUhNZ3hvTTl0ZEpXUDl6UUMzOExxc2ZJakI0UkkxWE1mdWJ1VDQrZnY0Znp0VEoyTlhtMjZKL2daYi9HL1gwcmR4b2x0VE54empLemtLcEp0ZXRia2plb3NBcWlRSWlXUHloMGhVVTk1dHNha1dyNDVWNUo3MTJjZDNxdHQ5Z0dkbjdFaFk4dUllUC9CcThVY2VZZC9YbFpYbDc2bHpEbmdzL2lDZXlNY3NuZXdQMjZBTDRaQzJReXdibVQzbXlSZmpld3ZSaUxxOWR1TVNidHIxYXRtYTJ0U1JIRjI0Z0JwUnpadE1RTmoyMjR4bTZVNUdRNXlOSWVzUXNFNmJzRGNSV0RTMGFVOEZERExybmhVQWZQT2JYMG5lTGR1QnU1VGZOWW9NZGlRbTgyUHVqVE1xaTlmN0t2QmJEUUdCeXdyVXR2eUNnTEFHNHNqeWluZDRCOEg3N2ZJamt5blI3Q3ZpQzlIOTVxSENVTCt3K3JzMmsvV0sxNlVsbGlTK0pET3UxWXpPMWRPOUp3V3hEMHd5ZVU0a0Y5MjIxaUE5Z2lUd2djZXhSU2c4TWJVMm1NSjJlaGdlY3g0YjJ3QloxR0FFPQ==';
+// 思维链签名常量
+// Claude 模型签名
+const CLAUDE_THOUGHT_SIGNATURE = 'RXFRRENrZ0lDaEFDR0FJcVFKV1Bvcy9GV20wSmtMV2FmWkFEbGF1ZTZzQTdRcFlTc1NvbklmemtSNFo4c1dqeitIRHBOYW9hS2NYTE1TeTF3bjh2T1RHdE1KVjVuYUNQclZ5cm9DMFNETHk4M0hOSWsrTG1aRUhNZ3hvTTl0ZEpXUDl6UUMzOExxc2ZJakI0UkkxWE1mdWJ1VDQrZnY0Znp0VEoyTlhtMjZKL2daYi9HL1gwcmR4b2x0VE54empLemtLcEp0ZXRia2plb3NBcWlRSWlXUHloMGhVVTk1dHNha1dyNDVWNUo3MTJjZDNxdHQ5Z0dkbjdFaFk4dUllUC9CcThVY2VZZC9YbFpYbDc2bHpEbmdzL2lDZXlNY3NuZXdQMjZBTDRaQzJReXdibVQzbXlSZmpld3ZSaUxxOWR1TVNidHIxYXRtYTJ0U1JIRjI0Z0JwUnpadE1RTmoyMjR4bTZVNUdRNXlOSWVzUXNFNmJzRGNSV0RTMGFVOEZERExybmhVQWZQT2JYMG5lTGR1QnU1VGZOWW9NZGlRbTgyUHVqVE1xaTlmN0t2QmJEUUdCeXdyVXR2eUNnTEFHNHNqeWluZDRCOEg3N2ZJamt5blI3Q3ZpQzlIOTVxSENVTCt3K3JzMmsvV0sxNlVsbGlTK0pET3UxWXpPMWRPOUp3V3hEMHd5ZVU0a0Y5MjIxaUE5Z2lUd2djZXhSU2c4TWJVMm1NSjJlaGdlY3g0YjJ3QloxR0FFPQ==';
+// Gemini 思维链签名
+const GEMINI_THOUGHT_SIGNATURE = 'EqAHCp0HAXLI2nygRbdzD4Vgzxxi7tbM87zIRkNgPLqTj+Jxv9mY8Q0G87DzbTtvsIFhWB0RZMoEK6ntm5GmUe6ADtxHk4zgHUs/FKqTu8tzUdPRDrKn3KCAtFW4LJqijZoFxNKMyQRmlgPUX4tGYE7pllD77UK6SjCwKhKZoSVZLMiPXP9YFktbida1Q5upXMrzG1t8abPmpFo983T/rgWlNqJp+Fb+bsoH0zuSpmU4cPKO3LIGsxBhvRhM/xydahZD+VpEX7TEJAN58z1RomFyx9u0IR7ukwZr2UyoNA+uj8OChUDFupQsVwbm3XE1UAt22BGvfYIyyZ42fxgOgsFFY+AZ72AOufcmZb/8vIw3uEUgxHczdl+NGLuS4Hsy/AAntdcH9sojSMF3qTf+ZK1FMav23SPxUBtU5T9HCEkKqQWRnMsVGYV1pupFisWo85hRLDTUipxVy9ug1hN8JBYBNmGLf8KtWLhVp7Z11PIAZj3C6HzoVyiVeuiorwNrn0ZaaXNe+y5LHuDF0DNZhrIfnXByq6grLLSAv4fTLeCJvfGzTWWyZDMbVXNx1HgumKq8calP9wv33t0hfEaOlcmfGIyh1J/N+rOGR0WXcuZZP5/VsFR44S2ncpwTPT+MmR0PsjocDenRY5m/X4EXbGGkZ+cfPnWoA64bn3eLeJTwxl9W1ZbmYS6kjpRGUMxExgRNOzWoGISddHCLcQvN7o50K8SF5k97rxiS5q4rqDmqgRPXzQTQnZyoL3dCxScX9cvLSjNCZDcotonDBAWHfkXZ0/EmFiONQcLJdANtAjwoA44Mbn50gubrTsNd7d0Rm/hbNEh/ZceUalV5MMcl6tJtahCJoybQMsnjWuBXl7cXiKmqAvxTDxIaBgQBYAo4FrbV4zQv35zlol+O3YiyjJn/U0oBeO5pEcH1d0vnLgYP71jZVY2FjWRKnDR9aw4JhiuqAa+i0tupkBy+H4/SVwHADFQq6wcsL8qvXlwktJL9MIAoaXDkIssw6gKE9EuGd7bSO9f+sA8CZ0I8LfJ3jcHUsE/3qd4pFrn5RaET56+1p8ZHZDDUQ0p1okApUCCYsC2WuL6O9P4fcg3yitAA/AfUUNjHKANE+ANneQ0efMG7fx9bvI+iLbXgPupApoov24JRkmhHsrJiu9bp+G/pImd2PNv7ArunJ6upl0VAUWtRyLWyGfdl6etGuY8vVJ7JdWEQ8aWzRK3g6e+8YmDtP5DAfw==';
+// 工具调用思维链签名
+const TOOL_THOUGHT_SIGNATURE = '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';
+// 兜底签名（非 Claude/Gemini 时）
+const DEFAULT_THOUGHT_SIGNATURE = CLAUDE_THOUGHT_SIGNATURE;
+
+function getThoughtSignatureForModel(actualModelName) {
+  if (!actualModelName) return DEFAULT_THOUGHT_SIGNATURE;
+  const lower = actualModelName.toLowerCase();
+  if (lower.includes('claude')) return CLAUDE_THOUGHT_SIGNATURE;
+  if (lower.includes('gemini')) return GEMINI_THOUGHT_SIGNATURE;
+  return DEFAULT_THOUGHT_SIGNATURE;
+}
 
 function extractImagesFromContent(content) {
   const result = { text: '', images: [] };
@@ -42,6 +59,64 @@ function extractImagesFromContent(content) {
 
   return result;
 }
+
+// 尝试从工具调用返回的 JSON 字符串中提取图片，
+// 保存到本地图床并将 data 替换为 URL，同时附带 markdown 字段。
+function transformToolOutputForImages(rawContent) {
+  if (!rawContent) return rawContent;
+
+  let obj = rawContent;
+  let isString = false;
+
+  if (typeof rawContent === 'string') {
+    isString = true;
+    try {
+      obj = JSON.parse(rawContent);
+    } catch {
+      // 不是 JSON，直接返回原始内容
+      return rawContent;
+    }
+  }
+
+  if (!obj || typeof obj !== 'object') {
+    return rawContent;
+  }
+
+  const response = obj.response;
+  const contents = response?.content;
+  if (!Array.isArray(contents)) {
+    return rawContent;
+  }
+
+  const markdownBlocks = [];
+
+  for (const item of contents) {
+    if (item && item.type === 'image' && item.data && item.mimeType) {
+      try {
+        const url = saveBase64Image(item.data, item.mimeType);
+        // 去掉大体积的 base64，改为 URL
+        delete item.data;
+        item.url = url;
+
+        const alt = item.alt || 'image';
+        markdownBlocks.push(`![${alt}](${url})`);
+      } catch {
+        // 单张图片保存失败时忽略，继续处理其它内容
+      }
+    }
+  }
+
+  if (markdownBlocks.length > 0) {
+    const markdown = markdownBlocks.join('\n\n');
+    if (typeof obj.markdown === 'string' && obj.markdown.trim()) {
+      obj.markdown += `\n\n${markdown}`;
+    } else {
+      obj.markdown = markdown;
+    }
+  }
+
+  return isString ? JSON.stringify(obj) : obj;
+}
 function handleUserMessage(extracted, antigravityMessages){
   antigravityMessages.push({
     role: "user",
@@ -71,20 +146,38 @@ function sanitizeToolName(name) {
   }
   return cleaned;
 }
-function handleAssistantMessage(message, antigravityMessages, enableThinking){
+function handleAssistantMessage(message, antigravityMessages, enableThinking, actualModelName, sessionId){
   const lastMessage = antigravityMessages[antigravityMessages.length - 1];
   const hasToolCalls = message.tool_calls && message.tool_calls.length > 0;
   const hasContent = message.content && message.content.trim() !== '';
   
-  const antigravityTools = hasToolCalls ? message.tool_calls.map(toolCall => ({
-    functionCall: {
-      id: toolCall.id,
-      name: sanitizeToolName(toolCall.function.name),
-      args: {
-        query: toolCall.function.arguments
+  const antigravityTools = hasToolCalls ? message.tool_calls.map(toolCall => {
+    const originalName = toolCall.function.name;
+    const safeName = sanitizeToolName(originalName);
+
+    const part = {
+      functionCall: {
+        id: toolCall.id,
+        name: safeName,
+        args: {
+          query: toolCall.function.arguments
+        }
       }
+    };
+
+    // 记录原始工具名到安全名的映射（仅当确实发生了变化时）
+    if (sessionId && actualModelName && safeName !== originalName) {
+      setToolNameMapping(sessionId, actualModelName, safeName, originalName);
     }
-  })) : [];
+
+    // 启用思考模型时，工具调用优先使用实时签名（如果上游带了），否则兜底用常量
+    if (enableThinking) {
+      const cachedToolSig = getToolSignature(sessionId, actualModelName);
+      part.thoughtSignature = toolCall.thoughtSignature || cachedToolSig || TOOL_THOUGHT_SIGNATURE;
+    }
+
+    return part;
+  }) : [];
 
   if (lastMessage?.role === "model" && hasToolCalls && !hasContent){
     lastMessage.parts.push(...antigravityTools)
@@ -102,6 +195,12 @@ function handleAssistantMessage(message, antigravityMessages, enableThinking){
     //   ]
     // }
     if (enableThinking) {
+      // 普通思维链签名：
+      // 1. 优先使用消息自身携带的 thoughtSignature
+      // 2. 其次使用缓存中的最新签名（同 session + model）
+      // 3. 最后按模型类型选择内置兜底签名
+      const cachedSig = getReasoningSignature(sessionId, actualModelName);
+      const thoughtSignature = message.thoughtSignature || cachedSig || getThoughtSignatureForModel(actualModelName);
       // 默认思考内容不能是完全空字符串，否则上游会要求 thinking 字段
       // 这里用一个不可见的退格符作为占位，实际展示时等价于“空思考块”
       let reasoningText = '';
@@ -112,7 +211,7 @@ function handleAssistantMessage(message, antigravityMessages, enableThinking){
       }
       parts.push({ text: reasoningText, thought: true });
       // 思维链签名占位，避免上游校验缺少签名字段
-      parts.push({ text: ' ', thoughtSignature: DEFAULT_THOUGHT_SIGNATURE });
+      parts.push({ text: ' ', thoughtSignature });
     }
 
     if (hasContent) parts.push({ text: message.content.trimEnd() });
@@ -141,12 +240,17 @@ function handleToolCall(message, antigravityMessages){
   }
   
   const lastMessage = antigravityMessages[antigravityMessages.length - 1];
+
+  // 尝试从工具输出中提取并持久化图片，返回值仍保持为字符串/原始格式，
+  // 但内部的图片 data 会被替换为图床 URL，并附带 markdown 字段。
+  const transformedContent = transformToolOutputForImages(message.content);
+
   const functionResponse = {
     functionResponse: {
       id: message.tool_call_id,
       name: functionName,
       response: {
-        output: message.content
+        output: transformedContent
       }
     }
   };
@@ -161,7 +265,7 @@ function handleToolCall(message, antigravityMessages){
     });
   }
 }
-function openaiMessageToAntigravity(openaiMessages, enableThinking){
+function openaiMessageToAntigravity(openaiMessages, enableThinking, actualModelName, sessionId){
   const antigravityMessages = [];
   for (const message of openaiMessages) {
     if (message.role === "user") {
@@ -172,7 +276,7 @@ function openaiMessageToAntigravity(openaiMessages, enableThinking){
       const extracted = extractImagesFromContent(message.content);
       handleUserMessage(extracted, antigravityMessages);
     } else if (message.role === "assistant") {
-      handleAssistantMessage(message, antigravityMessages, enableThinking);
+      handleAssistantMessage(message, antigravityMessages, enableThinking, actualModelName, sessionId);
     } else if (message.role === "tool") {
       handleToolCall(message, antigravityMessages);
     }
@@ -308,7 +412,7 @@ function cleanParameters(obj) {
   return cleaned;
 }
 
-function convertOpenAIToolsToAntigravity(openaiTools){
+function convertOpenAIToolsToAntigravity(openaiTools, sessionId, actualModelName){
   if (!openaiTools || openaiTools.length === 0) return [];
   return openaiTools.map((tool)=>{
     // 先清洗一遍参数，过滤/规范化不兼容字段
@@ -325,7 +429,13 @@ function convertOpenAIToolsToAntigravity(openaiTools){
       cleanedParams.properties = {};
     }
 
-    const safeName = sanitizeToolName(tool.function?.name);
+    const originalName = tool.function?.name;
+    const safeName = sanitizeToolName(originalName);
+
+    // 仅当发生转换时才缓存映射
+    if (sessionId && actualModelName && safeName !== originalName) {
+      setToolNameMapping(sessionId, actualModelName, safeName, originalName);
+    }
 
     return {
       functionDeclarations: [
@@ -382,8 +492,8 @@ function generateRequestBody(openaiMessages,modelName,parameters,openaiTools,tok
     project: token.projectId,
     requestId: generateRequestId(),
     request: {
-      contents: openaiMessageToAntigravity(filteredMessages, enableThinking),
-      tools: convertOpenAIToolsToAntigravity(openaiTools),
+      contents: openaiMessageToAntigravity(filteredMessages, enableThinking, actualModelName, token.sessionId),
+      tools: convertOpenAIToolsToAntigravity(openaiTools, token.sessionId, actualModelName),
       toolConfig: {
         functionCallingConfig: {
           mode: "VALIDATED"
@@ -423,21 +533,8 @@ function prepareImageRequest(requestBody) {
 
   return requestBody;
 }
-
-function getDefaultIp(){
-  const interfaces = os.networkInterfaces();
-  for (const iface of Object.values(interfaces)){
-    for (const inter of iface){
-      if (inter.family === 'IPv4' && !inter.internal){
-        return inter.address;
-      }
-    }
-  }
-  return '127.0.0.1';
-}
 export{
   generateRequestId,
   generateRequestBody,
-  prepareImageRequest,
-  getDefaultIp
+  prepareImageRequest
 }

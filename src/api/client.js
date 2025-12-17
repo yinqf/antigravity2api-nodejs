@@ -7,6 +7,8 @@ import { saveBase64Image } from '../utils/imageStorage.js';
 import logger from '../utils/logger.js';
 import memoryManager, { MemoryPressure, registerMemoryPoolCleanup } from '../utils/memoryManager.js';
 import { buildAxiosRequestConfig } from '../utils/httpClient.js';
+import { setReasoningSignature, setToolSignature } from '../utils/thoughtSignatureCache.js';
+import { getOriginalToolName } from '../utils/toolNameCache.js';
 
 // 请求客户端：优先使用 AntigravityRequester，失败则降级到 axios
 let requester = null;
@@ -234,16 +236,23 @@ async function handleApiError(error, token) {
 }
 
 // 转换 functionCall 为 OpenAI 格式（使用对象池）
-function convertToToolCall(functionCall) {
+// 会尝试将安全工具名还原为原始工具名
+function convertToToolCall(functionCall, sessionId, model) {
   const toolCall = getToolCallObject();
   toolCall.id = functionCall.id || generateToolCallId();
-  toolCall.function.name = functionCall.name;
+  let name = functionCall.name;
+  if (sessionId && model) {
+    const original = getOriginalToolName(sessionId, model, functionCall.name);
+    if (original) name = original;
+  }
+  toolCall.function.name = name;
   toolCall.function.arguments = JSON.stringify(functionCall.args);
   return toolCall;
 }
 
 // 解析并发送流式响应片段（会修改 state 并触发 callback）
 // 支持 DeepSeek 格式：思维链内容通过 reasoning_content 字段输出
+// 同时透传 thoughtSignature，方便客户端后续复用
 function parseAndEmitStreamChunk(line, state, callback) {
   if (!line.startsWith(DATA_PREFIX)) return;
   
@@ -256,13 +265,31 @@ function parseAndEmitStreamChunk(line, state, callback) {
       for (const part of parts) {
         if (part.thought === true) {
           // 思维链内容 - 使用 DeepSeek 格式的 reasoning_content
-          callback({ type: 'reasoning', reasoning_content: part.text || '' });
+          // 缓存最新的签名，方便后续片段缺省时复用，并写入全局缓存
+          if (part.thoughtSignature) {
+            state.reasoningSignature = part.thoughtSignature;
+            if (state.sessionId && state.model) {
+              setReasoningSignature(state.sessionId, state.model, part.thoughtSignature);
+            }
+          }
+          callback({
+            type: 'reasoning',
+            reasoning_content: part.text || '',
+            thoughtSignature: part.thoughtSignature || state.reasoningSignature || null
+          });
         } else if (part.text !== undefined) {
           // 普通文本内容
           callback({ type: 'text', content: part.text });
         } else if (part.functionCall) {
-          // 工具调用
-          state.toolCalls.push(convertToToolCall(part.functionCall));
+          // 工具调用，透传工具签名，并写入全局缓存
+          const toolCall = convertToToolCall(part.functionCall, state.sessionId, state.model);
+          if (part.thoughtSignature) {
+            toolCall.thoughtSignature = part.thoughtSignature;
+            if (state.sessionId && state.model) {
+              setToolSignature(state.sessionId, state.model, part.thoughtSignature);
+            }
+          }
+          state.toolCalls.push(toolCall);
         }
       }
     }
@@ -296,7 +323,13 @@ function parseAndEmitStreamChunk(line, state, callback) {
 export async function generateAssistantResponse(requestBody, token, callback) {
   
   const headers = buildHeaders(token);
-  const state = { toolCalls: [] };
+  // 在 state 中临时缓存思维链签名，供流式多片段复用，并携带 session 与 model 信息以写入全局缓存
+  const state = {
+    toolCalls: [],
+    reasoningSignature: null,
+    sessionId: requestBody.request?.sessionId,
+    model: requestBody.model
+  };
   const lineBuffer = getLineBuffer(); // 从对象池获取
   
   const processChunk = (chunk) => {
@@ -479,6 +512,7 @@ export async function generateAssistantResponseNoStream(requestBody, token) {
   const parts = data.response?.candidates?.[0]?.content?.parts || [];
   let content = '';
   let reasoningContent = '';
+  let reasoningSignature = null;
   const toolCalls = [];
   const imageUrls = [];
   
@@ -486,10 +520,17 @@ export async function generateAssistantResponseNoStream(requestBody, token) {
     if (part.thought === true) {
       // 思维链内容 - 使用 DeepSeek 格式的 reasoning_content
       reasoningContent += part.text || '';
+      if (part.thoughtSignature && !reasoningSignature) {
+        reasoningSignature = part.thoughtSignature;
+      }
     } else if (part.text !== undefined) {
       content += part.text;
     } else if (part.functionCall) {
-      toolCalls.push(convertToToolCall(part.functionCall));
+      const toolCall = convertToToolCall(part.functionCall, requestBody.request?.sessionId, requestBody.model);
+      if (part.thoughtSignature) {
+        toolCall.thoughtSignature = part.thoughtSignature;
+      }
+      toolCalls.push(toolCall);
     } else if (part.inlineData) {
       // 保存图片到本地并获取 URL
       const imageUrl = saveBase64Image(part.inlineData.data, part.inlineData.mimeType);
@@ -505,14 +546,28 @@ export async function generateAssistantResponseNoStream(requestBody, token) {
     total_tokens: usage.totalTokenCount || 0
   } : null;
   
+  // 将新的签名写入全局缓存（按 sessionId + model），供后续请求兜底使用
+  const sessionId = requestBody.request?.sessionId;
+  const model = requestBody.model;
+  if (sessionId && model) {
+    if (reasoningSignature) {
+      setReasoningSignature(sessionId, model, reasoningSignature);
+    }
+    // 工具签名：取第一个带 thoughtSignature 的工具作为缓存源
+    const toolSig = toolCalls.find(tc => tc.thoughtSignature)?.thoughtSignature;
+    if (toolSig) {
+      setToolSignature(sessionId, model, toolSig);
+    }
+  }
+
   // 生图模型：转换为 markdown 格式
   if (imageUrls.length > 0) {
     let markdown = content ? content + '\n\n' : '';
     markdown += imageUrls.map(url => `![image](${url})`).join('\n\n');
-    return { content: markdown, reasoningContent: reasoningContent || null, toolCalls, usage: usageData };
+    return { content: markdown, reasoningContent: reasoningContent || null, reasoningSignature, toolCalls, usage: usageData };
   }
   
-  return { content, reasoningContent: reasoningContent || null, toolCalls, usage: usageData };
+  return { content, reasoningContent: reasoningContent || null, reasoningSignature, toolCalls, usage: usageData };
 }
 
 export async function generateImageForSD(requestBody, token) {

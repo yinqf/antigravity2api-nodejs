@@ -107,7 +107,10 @@ const createStreamChunk = (id, created, model, delta, finish_reason = null) => {
 const writeStreamData = (res, data) => {
   const json = JSON.stringify(data);
   // 释放对象回池
-  if (data.choices) releaseChunkObject(data);
+                const delta = { reasoning_content: data.reasoning_content };
+                if (data.thoughtSignature) {
+                  delta.thoughtSignature = data.thoughtSignature;
+                }
   res.write(SSE_PREFIX);
   res.write(json);
   res.write(SSE_SUFFIX);
@@ -275,6 +278,9 @@ app.post('/v1/chat/completions', async (req, res) => {
                 usageData = data.usage;
               } else if (data.type === 'reasoning') {
                 const delta = { reasoning_content: data.reasoning_content };
+                if (data.thoughtSignature) {
+                  delta.thoughtSignature = data.thoughtSignature;
+                }
                 writeStreamData(res, createStreamChunk(id, created, model, delta));
               } else if (data.type === 'tool_calls') {
                 hasToolCall = true;
@@ -304,7 +310,7 @@ app.post('/v1/chat/completions', async (req, res) => {
       req.setTimeout(0); // 禁用请求超时
       res.setTimeout(0); // 禁用响应超时
       
-      const { content, reasoningContent, toolCalls, usage } = await with429Retry(
+      const { content, reasoningContent, reasoningSignature, toolCalls, usage } = await with429Retry(
         () => generateAssistantResponseNoStream(requestBody, token),
         safeRetries,
         'chat.no_stream '
@@ -312,6 +318,7 @@ app.post('/v1/chat/completions', async (req, res) => {
       // DeepSeek 格式：reasoning_content 在 content 之前
       const message = { role: 'assistant' };
       if (reasoningContent) message.reasoning_content = reasoningContent;
+      if (reasoningSignature) message.thoughtSignature = reasoningSignature;
       message.content = content;
       if (toolCalls.length > 0) message.tool_calls = toolCalls;
       
