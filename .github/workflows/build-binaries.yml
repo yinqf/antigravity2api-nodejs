@@ -2,7 +2,7 @@ name: Build Binaries
 
 on:
   push:
-    branches: [ 'binary-build' ]
+    branches: [ '**' ]
   workflow_dispatch:
     inputs:
       platforms:
@@ -120,7 +120,7 @@ jobs:
           body: |
             自动构建的二进制文件 (实验性)
             
-            分支: `binary-build`
+            分支: `${{ github.ref_name }}`
             提交: ${{ github.sha }}
             
             ## 下载
