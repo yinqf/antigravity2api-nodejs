@@ -30,7 +30,7 @@
 /* 防止闪烁的关键样式 - 来自 binary-build */
 html:not(.auth-ready) #loginForm,
 html:not(.auth-ready) #mainContent { visibility: hidden; }
-/* 登录状态显示控制 - 合并两个分支 *
+/* 登录状态显示控制 - 合并两个分支 */
 .logged-in #loginForm { display: none !important; }
 .logged-in #mainContent { display: flex !important; }
 html:not(.logged-in) #mainContent { display: none !important; }
@@ -214,13 +214,6 @@ html.tab-settings .tab[data-tab="settings"] {
                                             <span class="slider"></span>
                                         </label>
                                     </div>
-                                    <div class="form-group compact switch-group">
-                                        <label>透传签名 <span class="help-tip" data-tooltip="将响应中的thoughtSignature透传到客户端">?</span></label>
-                                        <label class="switch">
-                                            <input type="checkbox" name="PASS_SIGNATURE_TO_CLIENT">
-                                            <span class="slider"></span>
-                                        </label>
-                                    </div>
                                 </div>
                                 <div class="form-group compact">
                                     <label>系统提示词</label>
@@ -231,6 +224,15 @@ html.tab-settings .tab[data-tab="settings"] {
                             <!-- 轮询策略与性能优化 -->
                             <div class="config-section">
                                 <h4>🔄 轮询与性能</h4>
+                                <div class="form-row-inline switch-row">
+                                    <div class="form-group compact switch-group">
+                                        <label>透传签名 <span class="help-tip" data-tooltip="将响应中的thoughtSignature透传到客户端">?</span></label>
+                                        <label class="switch">
+                                            <input type="checkbox" name="PASS_SIGNATURE_TO_CLIENT">
+                                            <span class="slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
                                 <div class="form-row-inline">
                                     <div class="form-group compact">
                                         <label>策略模式 <span class="help-tip" data-tooltip="均衡负载：每次请求切换Token&#10;额度耗尽：用完额度才切换&#10;自定义次数：指定次数后切换">?</span></label>
