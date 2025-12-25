@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { randomUUID } from 'crypto';
 import { log } from '../utils/logger.js';
 import memoryManager, { MemoryPressure } from '../utils/memoryManager.js';
 import { getDataDir } from '../utils/paths.js';
@@ -22,13 +23,67 @@ class QuotaManager {
     this.registerMemoryCleanup();
   }
 
+  buildFileData(quotas) {
+    return {
+      meta: { lastCleanup: Date.now(), ttl: this.CLEANUP_INTERVAL },
+      quotas
+    };
+  }
+
+  atomicWriteJson(data) {
+    const dir = path.dirname(this.filePath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    const base = path.basename(this.filePath);
+    const tempPath = path.join(dir, `.${base}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`);
+    const content = JSON.stringify(data, null, 2);
+    let fd;
+    try {
+      fd = fs.openSync(tempPath, 'w');
+      fs.writeFileSync(fd, content, 'utf8');
+      fs.fsyncSync(fd);
+      fs.closeSync(fd);
+      try {
+        fs.renameSync(tempPath, this.filePath);
+      } catch (renameError) {
+        if (renameError.code === 'EEXIST' || renameError.code === 'EPERM') {
+          try {
+            fs.unlinkSync(this.filePath);
+          } catch (unlinkError) {
+            if (unlinkError.code !== 'ENOENT') {
+              throw unlinkError;
+            }
+          }
+          fs.renameSync(tempPath, this.filePath);
+        } else {
+          throw renameError;
+        }
+      }
+    } catch (error) {
+      if (fd !== undefined) {
+        try {
+          fs.closeSync(fd);
+        } catch (closeError) {
+          // Ignore close errors after write failures.
+        }
+      }
+      try {
+        fs.unlinkSync(tempPath);
+      } catch (cleanupError) {
+        // Ignore cleanup errors for temp files.
+      }
+      throw error;
+    }
+  }
+
   ensureFileExists() {
     const dir = path.dirname(this.filePath);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
     if (!fs.existsSync(this.filePath)) {
-      fs.writeFileSync(this.filePath, JSON.stringify({ meta: { lastCleanup: Date.now(), ttl: this.CLEANUP_INTERVAL }, quotas: {} }, null, 2), 'utf8');
+      this.atomicWriteJson(this.buildFileData({}));
     }
   }
 
@@ -50,11 +105,7 @@ class QuotaManager {
       this.cache.forEach((value, key) => {
         quotas[key] = value;
       });
-      const data = {
-        meta: { lastCleanup: Date.now(), ttl: this.CLEANUP_INTERVAL },
-        quotas
-      };
-      fs.writeFileSync(this.filePath, JSON.stringify(data, null, 2), 'utf8');
+      this.atomicWriteJson(this.buildFileData(quotas));
     } catch (error) {
       log.error('保存额度文件失败:', error.message);
     }
